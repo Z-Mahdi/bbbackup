@@ -1,0 +1,91 @@
+import requests
+from bs4 import BeautifulSoup
+from etherscan import Etherscan
+import time
+from termcolor import colored
+
+def print_green(text):
+    print(colored(text, 'green'))
+
+def print_red(text):
+    print(colored(text, 'red'))
+
+def fetch_ether_and_usd_values(txn_hash):
+    base_url = 'https://etherscan.io/tx/'
+    url = base_url + txn_hash
+    headers = {'User-Agent': 'Mozilla/5.0'}
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.content, 'html.parser')
+        spans_me_1 = soup.find_all('span', {'class': 'me-1'})
+
+        ether_values = []
+        usd_values = []
+        for i in range(len(spans_me_1)):
+            value = spans_me_1[i].get_text(strip=True)
+            if "($" in value:
+                usd_values.append(value)
+                ether_values.append(spans_me_1[i - 1].get_text(strip=True))
+
+        print("Ether Values:", ether_values)
+        print("USD Values:", usd_values)
+    else:
+        print(f"Failed to fetch the data for transaction {txn_hash}")
+
+api_key = "FF5IHF5RHUGCBR1CCMETD29HWQN1CJR8MP"
+eth = Etherscan(api_key)
+address = "0x27214a0758c810d6058a592f73aa75c9f35eac03"
+
+transactions = eth.get_normal_txs_by_address(address, 0, 'latest', 'desc')
+cutoff_time = time.time() - 11*24*60*60
+most_recent_tx = transactions[0]
+most_recent_tx_time = int(most_recent_tx['timeStamp'])
+
+if most_recent_tx_time >= cutoff_time:
+    print_green("The account is active.")
+
+    for transaction in transactions:
+        txn_hash = transaction['hash']
+        print(f"Exploring transaction hash: {txn_hash}")
+        fetch_ether_and_usd_values(txn_hash)
+
+    url = f"https://api.etherscan.io/api?module=account&action=tokentx&address={address}&startblock=0&endblock=999999999&sort=desc&apikey={api_key}"
+    response = requests.get(url).json()
+
+    out_counter = 0
+    unique_hashes = set()
+    unique_tokens = set()
+
+    for i in range(len(response['result'])):
+        token_transfer = response['result'][i]
+
+        if token_transfer['from'] == address.lower() and token_transfer['hash'] not in unique_hashes and token_transfer['tokenName'] not in unique_tokens:
+            unique_hashes.add(token_transfer['hash'])
+            unique_tokens.add(token_transfer['tokenName'])
+            out_counter += 1
+
+            etherscan_url = f"https://etherscan.io/token/{token_transfer['contractAddress']}?a={address}"
+            print(f"{out_counter}- OUT token transfer hash is: {token_transfer['hash']}, token name: {token_transfer['tokenName']}, contract address: {token_transfer['contractAddress']}")
+            print(f"Etherscan URL: {etherscan_url}")
+
+            token_transfers_url = f"https://api.etherscan.io/api?module=account&action=tokentx&contractaddress={token_transfer['contractAddress']}&address={address}&startblock=0&endblock=999999999&sort=asc&apikey={api_key}"
+            token_transfers_response = requests.get(token_transfers_url).json()
+
+            unique_transfer_hashes = set()
+
+            for transfer in token_transfers_response['result']:
+                if transfer['hash'] not in unique_transfer_hashes:
+                    unique_transfer_hashes.add(transfer['hash'])
+                    if transfer['from'] == address.lower():
+                        print(f"OUT token transfer hash: {transfer['hash']}")
+                    else:
+                        print(f"IN token transfer hash: {transfer['hash']}")
+
+else:
+    print_red("The account is not active.")
+
+
+# FF5IHF5RHUGCBR1CCMETD29HWQN1CJR8MP
+# 0x27214a0758c810d6058a592f73aa75c9f35eac03

@@ -1,0 +1,92 @@
+import requests
+from bs4 import BeautifulSoup
+from etherscan import Etherscan
+import time
+from termcolor import colored
+import pandas as pd
+import os
+
+def print_green(text):
+    print(colored(text, 'green'))
+
+def print_red(text):
+    print(colored(text, 'red'))
+
+def fetch_ether_and_usd_values(txn_hash, direction):
+    base_url = 'https://etherscan.io/tx/'
+    url = base_url + txn_hash
+    headers = {'User-Agent': 'Mozilla/5.0'}
+
+    response = requests.get(url, headers=headers)
+    ether_values = []
+    usd_values = []
+
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.content, 'html.parser')
+        spans_me_1 = soup.find_all('span', {'class': 'me-1'})
+
+        for i in range(len(spans_me_1)):
+            value = spans_me_1[i].get_text(strip=True)
+            if "($" in value:
+                usd_value = value
+                usd_values.append(usd_value)
+                ether_value_str = spans_me_1[i - 1].get_text(strip=True).split()[0].replace(',', '')
+                ether_value = float(ether_value_str) if ether_value_str else 0
+                ether_values.append(ether_value if direction == 'OUT' else -ether_value)
+
+        for ether_value, usd_value in zip(ether_values, usd_values):
+            print("Ether Value:", ether_value)
+            print("USD Value:", usd_value, '\n')
+
+        return sum(ether_values)  # If you want to return the total ether value for the transaction
+    else:
+        print(f"Failed to fetch the data for transaction {txn_hash}")
+
+    return 0
+
+api_key = "FF5IHF5RHUGCBR1CCMETD29HWQN1CJR8MP"  # Replace with your Etherscan API key
+eth = Etherscan(api_key)
+address = "0x2d108e77ede06f89a0f285b2acc40491fb886ab2"  # Replace with the address you want to explore
+
+transactions = eth.get_normal_txs_by_address(address, 0, 'latest', 'desc')
+cutoff_time = time.time() - 11*24*60*60
+most_recent_tx = transactions[0]
+most_recent_tx_time = int(most_recent_tx['timeStamp'])
+
+total_in_ether = 0
+total_out_ether = 0
+unique_tokens = set()  # You can populate this set with unique tokens as required
+
+if most_recent_tx_time >= cutoff_time:
+    print_green("The account is active.")
+
+    for transaction in transactions:
+        txn_hash = transaction['hash']
+        direction = 'OUT' if transaction['from'] == address.lower() else 'IN'
+        print(f"Exploring transaction hash: {txn_hash}")
+        ether_value = fetch_ether_and_usd_values(txn_hash, direction)
+        if direction == 'OUT':
+            total_out_ether += ether_value
+        else:
+            total_in_ether += -ether_value
+
+    print(f"Total IN Ether: {total_in_ether}")
+    print(f"Total OUT Ether: {total_out_ether}")
+
+    # Creating a DataFrame to store token names and ether values
+    tokens_df = pd.DataFrame(list(unique_tokens), columns=['Token Name'])
+    tokens_df['total_in_ether'] = [total_in_ether] * len(tokens_df)
+    tokens_df['total_out_ether'] = [total_out_ether] * len(tokens_df)
+
+    # Creating a directory for the ready files
+    if not os.path.exists('ready_files'):
+        os.makedirs('ready_files')
+
+    # Saving the DataFrame to an Excel file
+    file_path = f'ready_files/{address}.xlsx'
+    tokens_df.to_excel(file_path, index=False)
+    print(f"File saved at {file_path}")
+
+else:
+    print_red("The account is not active.")
+

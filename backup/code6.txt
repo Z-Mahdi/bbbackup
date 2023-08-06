@@ -1,0 +1,129 @@
+import os
+import glob
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
+from termcolor import colored
+
+def print_green(text):
+    print(colored(text, 'green'))
+
+def print_red(text):
+    print(colored(text, 'red'))
+
+api_key = "ZPFU35862MVWSNADAFAKMEZXWHUQZQZWYY"
+
+# Check for .xlsx or .csv files in the current directory
+files = glob.glob('./*.xlsx') + glob.glob('./*.csv')
+
+for file in files:
+    # Check if the file has a column named "address"
+    try:
+        df = pd.read_excel(file) if file.endswith('.xlsx') else pd.read_csv(file)
+    except Exception as e:
+        print_red(f"Error reading file {file}: {e}")
+        continue
+
+    if 'address' not in df.columns:
+        continue
+
+    # Read addresses and start operation
+    for address in df['address']:
+        url = f"https://api.etherscan.io/api?module=account&action=tokentx&address={address}&startblock=0&endblock=999999999&sort=desc&apikey={api_key}"
+        response = requests.get(url).json()
+
+        tokens_data = {}
+        unique_hashes = set()
+
+        if response['status'] == '1':
+            print_green(f"Processing transactions for address: {address}")
+
+            for token_transfer in response['result']:
+                token_name = token_transfer['tokenName']
+                txn_hash = token_transfer['hash']
+
+                if txn_hash in unique_hashes:
+                    continue
+
+                unique_hashes.add(txn_hash)
+                base_url = 'https://etherscan.io/tx/' + txn_hash
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                txn_response = requests.get(base_url, headers=headers)
+
+                if txn_response.status_code == 200:
+                    soup = BeautifulSoup(txn_response.content, 'html.parser')
+                    spans_me_1 = soup.find_all('span', {'class': 'me-1'})
+
+                    ether_values_in = 0
+                    ether_values_out = 0
+                    usd_values_in = 0
+                    usd_values_out = 0
+
+                    for i in range(len(spans_me_1)):
+                        value = spans_me_1[i].get_text(strip=True)
+                        if "($" in value:
+                            usd_value = float(value.replace('$', '').replace('(', '').replace(')', '').replace(',', ''))
+                            ether_value = float(spans_me_1[i - 1].get_text(strip=True).replace('Ether', ''))
+
+                            if address in token_transfer['to']:
+                                ether_values_in += ether_value
+                                usd_values_in += usd_value
+                            else:
+                                ether_values_out += ether_value
+                                usd_values_out += usd_value
+
+                    if token_name not in tokens_data:
+                        tokens_data[token_name] = {
+                            'total_in_ether_value': 0,
+                            'total_out_ether_value': 0,
+                            'total_in_usd_value': 0,
+                            'total_out_usd_value': 0,
+                            'count_in_transfers': 0,
+                            'count_out_transfers': 0
+                        }
+
+                    tokens_data[token_name]['total_in_ether_value'] += ether_values_in
+                    tokens_data[token_name]['total_out_ether_value'] += ether_values_out
+                    tokens_data[token_name]['total_in_usd_value'] += usd_values_in
+                    tokens_data[token_name]['total_out_usd_value'] += usd_values_out
+
+                    if address in token_transfer['to']:
+                        tokens_data[token_name]['count_in_transfers'] += 1
+                    else:
+                        tokens_data[token_name]['count_out_transfers'] += 1
+
+            # After processing all token transfers, calculate the differences and add new columns:
+            for token, data in tokens_data.items():
+                data['difference_ether'] = data['total_out_ether_value'] - data['total_in_ether_value'] if data['count_out_transfers'] > 0 else data['total_in_ether_value']
+                data['difference_usd'] = data['total_out_usd_value'] - data['total_in_usd_value'] if data['count_out_transfers'] > 0 else data['total_in_usd_value']
+
+                if data['total_out_ether_value'] == 0 and data['difference_ether'] > 0:
+                    data['win/lose'] = '---'
+                elif data['difference_ether'] > 0:
+                    data['win/lose'] = 1
+                elif data['difference_ether'] < 0:
+                    data['win/lose'] = 0
+                else:
+                    data['win/lose'] = '---'
+
+            # Save results to Excel in the "ready_files" directory
+            output_directory = "ready_files"
+            if not os.path.exists(output_directory):
+                os.makedirs(output_directory)
+
+            output_file_path = os.path.join(output_directory, f"{txn_hash}.xlsx")
+            df_out = pd.DataFrame.from_dict(tokens_data, orient='index')
+            df_out = df_out.reset_index()
+            df_out = df_out.rename(columns={"index": "tokenName"})
+            df_out.to_excel(output_file_path, index=False)
+
+            print_green(f"Data saved to {output_file_path}")
+
+            # Change terminal output
+            for token, data in tokens_data.items():
+                print(f"{txn_hash}, {token}")
+
+        else:
+            print_red(f"The account {address} is not active.")
+
+# 0x2d108e77ede06f89a0f285b2acc40491fb886ab2 ZPFU35862MVWSNADAFAKMEZXWHUQZQZWYY

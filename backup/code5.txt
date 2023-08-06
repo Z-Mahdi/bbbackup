@@ -1,0 +1,76 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+from termcolor import colored
+
+def print_green(text):
+    print(colored(text, 'green'))
+
+def print_red(text):
+    print(colored(text, 'red'))
+
+api_key = "ZPFU35862MVWSNADAFAKMEZXWHUQZQZWYY"
+address = "0x2d108e77ede06f89a0f285b2acc40491fb886ab2"
+
+url = f"https://api.etherscan.io/api?module=account&action=tokentx&address={address}&startblock=0&endblock=999999999&sort=desc&apikey={api_key}"
+response = requests.get(url).json()
+
+tokens_data = {}
+unique_hashes = set()
+
+if response['status'] == '1':
+    print_green("The account is active.")
+
+    for token_transfer in response['result']:
+        token_name = token_transfer['tokenName']
+        txn_hash = token_transfer['hash']
+        
+        if txn_hash in unique_hashes:
+            continue
+            
+        unique_hashes.add(txn_hash)
+        base_url = 'https://etherscan.io/tx/' + txn_hash
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        txn_response = requests.get(base_url, headers=headers)
+
+        if txn_response.status_code == 200:
+            soup = BeautifulSoup(txn_response.content, 'html.parser')
+            spans_me_1 = soup.find_all('span', {'class': 'me-1'})
+
+            ether_values_in = 0
+            ether_values_out = 0
+            usd_values_in = 0
+            usd_values_out = 0
+
+            for i in range(len(spans_me_1)):
+                value = spans_me_1[i].get_text(strip=True)
+                if "($" in value:
+                    usd_value = float(value.replace('$', '').replace('(', '').replace(')', '').replace(',', ''))
+                    ether_value = float(spans_me_1[i - 1].get_text(strip=True).replace('Ether', ''))
+
+                    if address in token_transfer['to']:
+                        ether_values_in += ether_value
+                        usd_values_in += usd_value
+                    else:
+                        ether_values_out += ether_value
+                        usd_values_out += usd_value
+
+            if token_name not in tokens_data:
+                tokens_data[token_name] = {'total_in_ether_value': 0, 'total_out_ether_value': 0, 'total_in_usd_value': 0, 'total_out_usd_value': 0}
+
+            tokens_data[token_name]['total_in_ether_value'] += ether_values_in
+            tokens_data[token_name]['total_out_ether_value'] += ether_values_out
+            tokens_data[token_name]['total_in_usd_value'] += usd_values_in
+            tokens_data[token_name]['total_out_usd_value'] += usd_values_out
+
+    # Save results to Excel
+    df = pd.DataFrame.from_dict(tokens_data, orient='index')
+    output_file_path = address + '.xlsx'
+    df.to_excel(output_file_path)
+
+    print_green(f"Data saved to {output_file_path}")
+
+else:
+    print_red("The account is not active.")
+
+# 0x2d108e77ede06f89a0f285b2acc40491fb886ab2 ZPFU35862MVWSNADAFAKMEZXWHUQZQZWYY

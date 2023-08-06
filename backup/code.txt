@@ -1,0 +1,80 @@
+from etherscan import Etherscan
+import time
+import requests
+from termcolor import colored
+
+def print_green(text):
+    print(colored(text, 'green'))  # prints in green color
+
+def print_red(text):
+    print(colored(text, 'red'))  # prints in red color
+
+api_key = "ZPFU35862MVWSNADAFAKMEZXWHUQZQZWYY"  # replace with your Etherscan API key
+eth = Etherscan(api_key)  # Initialize the Etherscan client
+address = "0x5ECe5267FF32EA41e50E2d7461EEfB6b417C47DF"
+
+# Get the transactions for the specified address
+transactions = eth.get_normal_txs_by_address(address, 0, 'latest', 'desc')
+
+# Calculate the cutoff timestamp for 11 days ago
+cutoff_time = time.time() - 11*24*60*60
+
+# Check the age of the most recent transaction
+most_recent_tx = transactions[0]  # the most recent transaction is the first one in the list
+most_recent_tx_time = int(most_recent_tx['timeStamp'])
+
+if most_recent_tx_time >= cutoff_time:
+    print_green("The account is active.")
+    
+    # Now fetch the ERC20 token transfers for the address
+    url = f"https://api.etherscan.io/api?module=account&action=tokentx&address={address}&startblock=0&endblock=999999999&sort=desc&apikey={api_key}"
+    response = requests.get(url).json()
+
+    # Initialize a counter for "OUT" transactions and a set for unique tokens
+    out_counter = 0
+    unique_hashes = set()
+    unique_tokens = set()
+
+    for i in range(len(response['result'])):
+        token_transfer = response['result'][i]
+        
+        # Check if the transaction is "OUT" and if the hash and token name are not already in the unique sets
+        if token_transfer['from'] == address.lower() and token_transfer['hash'] not in unique_hashes and token_transfer['tokenName'] not in unique_tokens:
+            unique_hashes.add(token_transfer['hash'])
+            unique_tokens.add(token_transfer['tokenName'])
+            out_counter += 1
+            
+            # Generate the Etherscan URL for the token with a query parameter for the address
+            etherscan_url = f"https://etherscan.io/token/{token_transfer['contractAddress']}?a={address}"
+            print(f"{out_counter}- OUT token transfer hash is: {token_transfer['hash']}, token name: {token_transfer['tokenName']}, contract address: {token_transfer['contractAddress']}")
+            print(f"Etherscan URL: {etherscan_url}")
+
+            # Use the Etherscan API to get the token transfers for the token and address
+            token_transfers_url = f"https://api.etherscan.io/api?module=account&action=tokentx&contractaddress={token_transfer['contractAddress']}&address={address}&startblock=0&endblock=999999999&sort=asc&apikey={api_key}"
+            token_transfers_response = requests.get(token_transfers_url).json()
+
+            unique_transfer_hashes = set()
+
+            # Print the direction and hash of each token transfer
+            for transfer in token_transfers_response['result']:
+                if transfer['hash'] not in unique_transfer_hashes:
+                    unique_transfer_hashes.add(transfer['hash'])
+                    if transfer['from'] == address.lower():
+                        print(f"OUT token transfer hash: {transfer['hash']}")
+                    else:
+                        print(f"IN token transfer hash: {transfer['hash']}")
+
+else:
+    print_red("The account is not active.")
+
+
+
+
+
+
+
+
+
+# 0x5ECe5267FF32EA41e50E2d7461EEfB6b417C47DF
+# 0x32ae323792ecf158ae89283f49a255e96536d3b9
+# ZPFU35862MVWSNADAFAKMEZXWHUQZQZWYY

@@ -1,0 +1,33 @@
+import requests
+from bs4 import BeautifulSoup
+
+base_url = 'https://etherscan.io/tx/'
+
+txn_hashes = ['0x0575ba6ed90ad1a8cb526a06487abbeffe738fc9ea8e98aad2c6631e362bf7cf']
+
+headers = {'User-Agent': 'Mozilla/5.0'}
+
+for txn_hash in txn_hashes:
+    url = base_url + txn_hash
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        spans_me_1 = soup.find_all('span', {'class': 'me-1'})
+
+        ether_values = []
+        usd_values = []
+        for i in range(len(spans_me_1)):
+            value = spans_me_1[i].get_text(strip=True)
+            if "($" in value:
+                usd_values.append(value)
+                ether_values.append(spans_me_1[i - 1].get_text(strip=True))
+        
+        print("Ether Values:", ether_values)
+        print("USD Values:", usd_values)
+
+    else:
+        print(f"Failed to fetch the data for transaction {txn_hash}")
+
